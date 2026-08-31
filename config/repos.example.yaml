@@ -1,0 +1,33 @@
+# Which AI runtime performs reviews. Only "claude" is implemented today;
+# "codex" is a declared seam that will throw until its adapter is written.
+runtime: claude
+
+# How often to poll GitHub for new pull requests.
+pollIntervalMinutes: 10
+
+# Commenting this phrase on a PR queues an extra review pass. Manual passes
+# always bypass the filter below.
+triggerPhrase: "@review-agent review"
+
+defaults:
+  role: |
+    You are a pragmatic senior engineer reviewing a pull request.
+    Prioritise correctness bugs, security issues, and data-loss risks.
+    Do not comment on formatting that a linter would catch.
+  # Raw GitHub search qualifiers. GitHub applies these server-side; the
+  # service adds `repo:<owner>/<name> is:pr is:open` automatically.
+  filter: "draft:false -author:dependabot[bot] -author:renovate[bot]"
+
+repos:
+  # Inherits both defaults above.
+  - repo: acme/api
+
+  # Fully replaces the default role; keeps the default filter.
+  - repo: acme/payments
+    role: |
+      You are a payments-domain reviewer. Scrutinise money arithmetic,
+      rounding, currency handling, idempotency, and retry safety.
+
+  # Fully replaces the default filter; keeps the default role.
+  - repo: acme/infra
+    filter: "draft:false base:main -author:dependabot[bot]"
