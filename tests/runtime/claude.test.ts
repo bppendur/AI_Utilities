@@ -40,6 +40,25 @@ describe("buildClaudeArgs", () => {
     expect(ALLOWED_TOOLS.some((tool) => tool.startsWith("Bash"))).toBe(false);
     expect(DISALLOWED_TOOLS).toContain("Bash");
   });
+
+  it("loads no configuration from the attacker-controlled checkout", () => {
+    // Regression guard: --allowed-tools/--disallowed-tools gate tool calls
+    // the model makes, but NOT hooks or MCP servers. A PR that commits
+    // .claude/settings.json or .mcp.json into its branch would otherwise get
+    // those loaded the moment the CLI starts with cwd set to the checkout,
+    // executing attacker-controlled shell commands outside the tool-gating
+    // boundary entirely. These three flags must all be present, or that RCE
+    // path reopens:
+    const args = buildClaudeArgs("x");
+    expect(args).toContain("--bare");
+    // Index-based (not substring) so removing --setting-sources or changing
+    // its value away from "user" fails this test even though the string
+    // "user" might otherwise appear elsewhere.
+    const settingSourcesIndex = args.indexOf("--setting-sources");
+    expect(settingSourcesIndex).toBeGreaterThan(-1);
+    expect(args[settingSourcesIndex + 1]).toBe("user");
+    expect(args).toContain("--strict-mcp-config");
+  });
 });
 
 describe("createClaudeRuntime", () => {
