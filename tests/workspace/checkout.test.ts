@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildCloneUrl, createWorkspaceFromRef } from "../../src/workspace/checkout.js";
+import {
+  buildCloneUrl,
+  createWorkspaceFromRef,
+  sanitizeGitError,
+} from "../../src/workspace/checkout.js";
 
 const run = promisify(execFile);
 
@@ -31,6 +35,20 @@ describe("buildCloneUrl", () => {
     expect(buildCloneUrl("acme", "api", "ghp_tok")).toBe(
       "https://x-access-token:ghp_tok@github.com/acme/api.git",
     );
+  });
+});
+
+describe("sanitizeGitError", () => {
+  it("redacts basic-auth credentials from the error message and preserves the original as cause", () => {
+    const remote = "https://x-access-token:ghp_secret123@github.com/o/r.git";
+    const original = new Error(`Command failed: git remote add origin ${remote}`);
+
+    const sanitized = sanitizeGitError(original, remote);
+
+    expect(sanitized.message).not.toContain("ghp_secret123");
+    expect(sanitized.message).not.toContain("x-access-token");
+    expect(sanitized.message).toContain("***");
+    expect(sanitized.cause).toBe(original);
   });
 });
 
@@ -77,4 +95,25 @@ describe("createWorkspaceFromRef", () => {
     expect(await readFile(join(ws.dir, "hello.txt"), "utf8")).toBe("from feature\n");
     await ws.cleanup();
   });
+
+  it(
+    "never leaks the clone token in a failed checkout's error message",
+    async () => {
+      let caught: unknown;
+      try {
+        await createWorkspaceFromRef({
+          remote: "https://x-access-token:ghp_faketoken@127.0.0.1:1/nope.git",
+          refs: ["main"],
+          checkoutRef: "FETCH_HEAD",
+          rootDir: join(root, "workspaces"),
+          label: "acme-api-4",
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).not.toContain("ghp_faketoken");
+    },
+    15_000,
+  );
 });

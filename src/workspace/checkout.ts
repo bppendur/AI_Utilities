@@ -11,6 +11,27 @@ export function buildCloneUrl(owner: string, name: string, token: string): strin
   return `https://x-access-token:${token}@github.com/${owner}/${name}.git`;
 }
 
+const CREDENTIALED_URL = /https:\/\/[^@\s]+@/g;
+
+/**
+ * Strips basic-auth credentials from a git error's message before it is
+ * rethrown, so a checkout failure never leaks the clone token to a caller
+ * that logs the error directly (e.g. an un-redacting top-level
+ * `console.error`). Redacts generically over the message text — rather
+ * than only string-replacing the known `remote` value — so a URL git
+ * echoes back in a slightly different form is still covered. The original
+ * error is preserved as `cause` for debugging.
+ */
+export function sanitizeGitError(error: unknown, remote: string): Error {
+  const original = error instanceof Error ? error : new Error(String(error));
+  let message = original.message;
+  if (message.includes(remote)) {
+    message = message.split(remote).join(remote.replace(CREDENTIALED_URL, "https://***@"));
+  }
+  message = message.replace(CREDENTIALED_URL, "https://***@");
+  return new Error(message, { cause: original });
+}
+
 export interface CreateWorkspaceFromRefOptions {
   remote: string;
   refs: string[];
@@ -43,7 +64,7 @@ export async function createWorkspaceFromRef(
     await git(["checkout", "--quiet", "--detach", opts.checkoutRef]);
   } catch (error) {
     await rm(dir, { recursive: true, force: true });
-    throw error;
+    throw sanitizeGitError(error, opts.remote);
   }
   return {
     dir,
