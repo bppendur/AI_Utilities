@@ -2,6 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **CORRECTION (added during Task 14, 2026-08-31):** This plan's Task 10 gives
+> the agent `Bash` restricted to non-mutating `git`/`gh` subcommands (see the
+> Global Constraints line below and the Task 10 section). That design was
+> **removed during implementation**, not shipped: a reviewer showed that
+> several git subcommands accept an `--output=<file>`-style flag that writes
+> arbitrary files, so a prefix allow-list is an arbitrary-file-write
+> primitive, not a read-only boundary. The shipped agent has no `Bash` at
+> all — allowed tools are exactly `Read`, `Grep`, `Glob`. This note is left
+> in place rather than rewriting the plan's history below; treat
+> `src/runtime/claude.ts` as the current truth on tool access, not this
+> document.
+
 **Goal:** Build a long-running Node/TypeScript service that polls preconfigured GitHub repos, reviews newly-opened pull requests with a per-repo role using headless Claude Code, and posts the findings as inline PR comments.
 
 **Architecture:** A poll loop queries GitHub's Search API once per repo per cycle using a raw per-repo qualifier string, so filtering happens server-side. Each unreviewed PR is shallow-cloned into a scratch workspace, and a `ReviewRuntime` (Claude implementation only for now) invokes `claude -p` headlessly there with read-only tools, returning structured JSON findings. The harness posts those findings as a GitHub review with `event: "COMMENT"` and records the pass in a local JSON state file so restarts never double-review.
