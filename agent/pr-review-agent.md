@@ -53,10 +53,11 @@ Changed files:
 
 ## How to work
 
-You have read-only access to the checked-out repository. Use Read, Grep and
-Glob to inspect any file, and read-only git commands (`git log`, `git show`,
-`git diff origin/{{BASE_REF}}...HEAD`) to understand history and the full
-change. You cannot and must not modify, commit, or push anything.
+You have read-only access to the repository, checked out at the PR's head
+commit, via the Read, Grep and Glob tools. The complete diff for this pull
+request is already provided above in `<pull_request_diff>` — you do not need
+to (and cannot) run a command to fetch it. You cannot execute any commands
+(no Bash tool of any kind), and you cannot modify, commit, or push anything.
 
 Look beyond the diff when it matters: check callers of changed functions,
 existing tests, and neighbouring code for the conventions this change should

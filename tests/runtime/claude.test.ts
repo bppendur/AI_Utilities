@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import { buildClaudeArgs, createClaudeRuntime } from "../../src/runtime/claude.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  ALLOWED_TOOLS,
+  DISALLOWED_TOOLS,
+  buildClaudeArgs,
+  createClaudeRuntime,
+} from "../../src/runtime/claude.js";
 import { createRuntime } from "../../src/runtime/index.js";
 
 const input = { prompt: "review this", workspaceDir: "/ws", timeoutMs: 60_000 };
@@ -26,6 +31,14 @@ describe("buildClaudeArgs", () => {
       expect(joined).toContain(tool);
     }
     expect(joined).toContain("--disallowed-tools");
+  });
+
+  it("grants no Bash access at all — not even to read-only git/gh subcommands", () => {
+    // Regression guard: `git diff/show/log --output=<file>` writes arbitrary
+    // files, so a prefix-wildcard Bash(git ...:*) grant is a file-write
+    // primitive, not a read-only boundary. Bash must be blanket-denied.
+    expect(ALLOWED_TOOLS.some((tool) => tool.startsWith("Bash"))).toBe(false);
+    expect(DISALLOWED_TOOLS).toContain("Bash");
   });
 });
 
@@ -63,6 +76,22 @@ describe("createClaudeRuntime", () => {
   it("surfaces a CLI failure rather than returning an empty review", async () => {
     const exec = vi.fn().mockRejectedValue(new Error("claude exited with 1"));
     await expect(createClaudeRuntime(exec).review(input)).rejects.toThrow(/claude/i);
+  });
+
+  describe("ANTHROPIC_API_KEY guard", () => {
+    const originalKey = process.env.ANTHROPIC_API_KEY;
+
+    afterEach(() => {
+      if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = originalKey;
+    });
+
+    it("fails fast without spawning a subprocess when no key is set and no exec is injected", async () => {
+      delete process.env.ANTHROPIC_API_KEY;
+      // No exec argument: createClaudeRuntime() falls back to the real,
+      // execa-backed default — so this must reject before ever awaiting it.
+      await expect(createClaudeRuntime().review(input)).rejects.toThrow(/ANTHROPIC_API_KEY/);
+    });
   });
 });
 

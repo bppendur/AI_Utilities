@@ -3,23 +3,20 @@ import { parseReviewResult } from "./parse.js";
 import type { ReviewResult, ReviewRuntime, RuntimeInput } from "./types.js";
 
 /**
- * Read-only tool surface. Bash is scoped to non-mutating git/gh subcommands
- * only — the agent must be incapable of editing, committing or pushing.
+ * Read-only tool surface. The agent can read files (Read/Grep/Glob) but
+ * cannot execute commands at all — Bash is blanket-denied below, not
+ * allow-listed to "safe" subcommands. Several git subcommands accept an
+ * `--output=<file>` (or equivalent) flag that writes arbitrary files, so a
+ * prefix-wildcard allow-list like `Bash(git diff:*)` is an arbitrary-file-write
+ * primitive reachable from attacker-controlled PR content, not a read-only
+ * boundary. Do not reintroduce any `Bash(...)` entry here without re-deriving
+ * that every argument spelling that pattern admits is actually non-mutating —
+ * git's flag surface is too large to enumerate safely.
  */
-export const ALLOWED_TOOLS = [
-  "Read",
-  "Grep",
-  "Glob",
-  "Bash(git diff:*)",
-  "Bash(git log:*)",
-  "Bash(git show:*)",
-  "Bash(git status:*)",
-  "Bash(git blame:*)",
-  "Bash(gh pr view:*)",
-  "Bash(gh pr diff:*)",
-];
+export const ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
 
 export const DISALLOWED_TOOLS = [
+  "Bash",
   "Edit",
   "Write",
   "MultiEdit",
