@@ -123,4 +123,126 @@ describe("pollOnce", () => {
     expect(summary.errors).toBe(1);
     expect(summary.autoReviewed).toBe(1);
   });
+
+  it("keeps reviewing remaining PRs in a repo when checking review state throws for one of them", async () => {
+    const deps = await makeDeps({
+      github: {
+        searchPullRequestNumbers: vi.fn().mockImplementation((q: string) =>
+          Promise.resolve(q.includes("in:comments") ? [] : [10, 11]),
+        ),
+        listTriggerComments: vi.fn().mockResolvedValue([]),
+        octokit: {} as never,
+      },
+    });
+    vi.spyOn(deps.state, "hasBeenReviewed").mockImplementationOnce(() => {
+      throw new Error("state corrupt");
+    });
+
+    const summary = await pollOnce([repo], deps);
+    expect(summary.errors).toBe(1);
+    expect(summary.autoReviewed).toBe(1);
+  });
+
+  it("fully processes the remaining repos when an earlier repo's discovery search rejects", async () => {
+    const repoA: ResolvedRepo = {
+      owner: "acme", name: "svc-a", fullName: "acme/svc-a", role: "r", filter: "",
+    };
+    const repoB: ResolvedRepo = {
+      owner: "acme", name: "svc-b", fullName: "acme/svc-b", role: "r", filter: "",
+    };
+    const runReview = vi.fn().mockResolvedValue({
+      reviewed: true, passNumber: 1, findingCount: 0, inline: true,
+    });
+    const deps = await makeDeps({
+      github: {
+        searchPullRequestNumbers: vi.fn().mockImplementation((q: string) => {
+          if (q.includes("acme/svc-a")) return Promise.reject(new Error("boom"));
+          if (q.includes("acme/svc-b") && !q.includes("in:comments")) return Promise.resolve([42]);
+          return Promise.resolve([]);
+        }),
+        listTriggerComments: vi.fn().mockResolvedValue([]),
+        octokit: {} as never,
+      },
+      runReview,
+    });
+
+    const summary = await pollOnce([repoA, repoB], deps);
+    expect(summary.autoReviewed).toBe(1);
+    expect(runReview).toHaveBeenCalledWith(
+      expect.objectContaining({ prNumber: 42, trigger: "auto" }),
+    );
+    expect(summary.errors).toBeGreaterThan(0);
+  });
+
+  it("advances the trigger marker even when runReview rejects, so a permanently-failing PR is not retried forever", async () => {
+    const runReview = vi.fn().mockRejectedValue(new Error("boom"));
+    const deps = await makeDeps({
+      github: {
+        searchPullRequestNumbers: vi.fn().mockImplementation((q: string) =>
+          Promise.resolve(q.includes("in:comments") ? [20] : []),
+        ),
+        listTriggerComments: vi.fn().mockResolvedValue([
+          { id: 900, author: "bhanu", createdAt: "2026-01-01", body: "@review-agent review" },
+        ]),
+        octokit: {} as never,
+      },
+      runReview,
+    });
+
+    const first = await pollOnce([repo], deps);
+    expect(first.errors).toBe(1);
+    expect(deps.state.lastTriggerCommentId("acme/api#20")).toBe(900);
+
+    await pollOnce([repo], deps);
+    expect(runReview).toHaveBeenCalledOnce();
+  });
+
+  it("does not call runReview when persisting the trigger id fails, so nothing is posted twice", async () => {
+    const runReview = vi.fn().mockResolvedValue({
+      reviewed: true, passNumber: 1, findingCount: 0, inline: true,
+    });
+    const deps = await makeDeps({
+      github: {
+        searchPullRequestNumbers: vi.fn().mockImplementation((q: string) =>
+          Promise.resolve(q.includes("in:comments") ? [20] : []),
+        ),
+        listTriggerComments: vi.fn().mockResolvedValue([
+          { id: 900, author: "bhanu", createdAt: "2026-01-01", body: "@review-agent review" },
+        ]),
+        octokit: {} as never,
+      },
+      runReview,
+    });
+    vi.spyOn(deps.state, "setLastTriggerCommentId").mockRejectedValueOnce(new Error("disk full"));
+
+    const first = await pollOnce([repo], deps);
+    expect(first.errors).toBe(1);
+    expect(runReview).not.toHaveBeenCalled();
+
+    const second = await pollOnce([repo], deps);
+    expect(second.manualReviewed).toBe(1);
+    expect(runReview).toHaveBeenCalledOnce();
+  });
+
+  it("reviews a PR only once when it matches both the auto filter and an unprocessed trigger comment in the same cycle", async () => {
+    const runReview = vi.fn().mockResolvedValue({
+      reviewed: true, passNumber: 1, findingCount: 0, inline: true,
+    });
+    const deps = await makeDeps({
+      github: {
+        searchPullRequestNumbers: vi.fn().mockResolvedValue([30]),
+        listTriggerComments: vi.fn().mockResolvedValue([
+          { id: 900, author: "bhanu", createdAt: "2026-01-01", body: "@review-agent review" },
+        ]),
+        octokit: {} as never,
+      },
+      runReview,
+    });
+
+    const summary = await pollOnce([repo], deps);
+    expect(runReview).toHaveBeenCalledOnce();
+    expect(summary.autoReviewed).toBe(1);
+    expect(summary.manualReviewed).toBe(0);
+    expect(deps.state.lastTriggerCommentId("acme/api#30")).toBe(900);
+  });
 });
