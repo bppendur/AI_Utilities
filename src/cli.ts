@@ -19,6 +19,20 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/**
+ * Parses a `--pr` CLI argument into a PR number, rejecting anything that
+ * isn't entirely digits. `Number.parseInt` alone would silently accept
+ * "12abc" as 12 (it stops at the first non-digit rather than rejecting the
+ * whole string), so the shape is checked first.
+ */
+export function parsePrNumber(raw: string): number {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`--pr must be a number, got: ${raw}`);
+  }
+  return Number.parseInt(trimmed, 10);
+}
+
 export async function buildDeps(): Promise<{ repos: ResolvedRepo[]; deps: PollDeps; intervalMs: number }> {
   const configPath = process.env.CONFIG_PATH ?? "./config/repos.yaml";
   const statePath = process.env.STATE_PATH ?? "./state/state.json";
@@ -56,15 +70,21 @@ export interface RunLoopOptions {
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    // Removing the listener on the normal (non-aborted) path, not just in
+    // onAbort, is what prevents unbounded listener growth: `signal` is the
+    // same AbortSignal for the daemon's entire lifetime, so a listener left
+    // behind after every cycle that resolves via the timer (the common
+    // case) accumulates forever and eventually trips Node's
+    // MaxListenersExceededWarning. Do not "simplify" this away.
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -124,6 +144,7 @@ export function buildProgram(): Command {
     .requiredOption("--repo <owner/name>", "repository to review in")
     .requiredOption("--pr <number>", "pull request number")
     .action(async (opts: { repo: string; pr: string }) => {
+      const prNumber = parsePrNumber(opts.pr);
       const { repos, deps } = await buildDeps();
       const repo = repos.find((r) => r.fullName === opts.repo);
       if (!repo) {
@@ -131,8 +152,6 @@ export function buildProgram(): Command {
           `Repo ${opts.repo} is not in the config. Configured repos: ${repos.map((r) => r.fullName).join(", ")}`,
         );
       }
-      const prNumber = Number.parseInt(opts.pr, 10);
-      if (Number.isNaN(prNumber)) throw new Error(`--pr must be a number, got: ${opts.pr}`);
       const outcome = await runReview({ repo, prNumber, trigger: "manual", deps });
       deps.logger.info("Review complete", { ...outcome });
     });
