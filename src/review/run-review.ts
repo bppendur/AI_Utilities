@@ -1,7 +1,7 @@
 import type { ResolvedRepo } from "../config/schema.js";
 import type { GitHubClient } from "../github/client.js";
 import type { postReview as PostReviewFn } from "../github/post-review.js";
-import type { Logger } from "../logger.js";
+import { errorMessage, type Logger } from "../logger.js";
 import { buildPrompt } from "../runtime/prompt.js";
 import type { ReviewRuntime } from "../runtime/types.js";
 import { prKey, type StateStore } from "../state/store.js";
@@ -55,7 +55,6 @@ export async function runReview(options: RunReviewOptions): Promise<RunReviewOut
     owner: repo.owner,
     name: repo.name,
     prNumber,
-    baseRef: pr.baseRef,
     token: deps.token,
     rootDir: deps.workspaceRoot,
   });
@@ -82,6 +81,17 @@ export async function runReview(options: RunReviewOptions): Promise<RunReviewOut
     );
     return { reviewed: true, passNumber, findingCount: result.findings.length, inline };
   } finally {
-    await workspace.cleanup();
+    // Never let a cleanup failure (e.g. Windows EBUSY/EPERM mid-`rm -rf` of
+    // a git tree) mask the real outcome above: an unswallowed throw here
+    // would surface as "review failed" for what was actually a successful
+    // review, and would also propagate instead of the try block's own
+    // error when the runtime/post genuinely failed. Log and move on either
+    // way; the startup sweep in cli.ts's buildDeps cleans up anything left
+    // behind.
+    try {
+      await workspace.cleanup();
+    } catch (cleanupError) {
+      deps.logger.warn(`Failed to clean up workspace for ${key}: ${errorMessage(cleanupError)}`);
+    }
   }
 }

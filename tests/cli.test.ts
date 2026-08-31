@@ -1,5 +1,43 @@
-import { describe, expect, it, vi } from "vitest";
-import { buildProgram, parsePrNumber, runLoop } from "../src/cli.js";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildProgram, parsePrNumber, runLoop, sweepWorkspaceRoot } from "../src/cli.js";
+
+describe("sweepWorkspaceRoot", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "prsweep-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("removes every leftover entry and reports how many were swept", async () => {
+    const root = join(dir, "workspaces");
+    await mkdir(join(root, "acme-api-1"), { recursive: true });
+    await mkdir(join(root, "acme-api-2"), { recursive: true });
+    await writeFile(join(root, "acme-api-1", "hello.txt"), "leftover", "utf8");
+    await writeFile(join(root, "stray-file.txt"), "leftover", "utf8");
+
+    const swept = await sweepWorkspaceRoot(root);
+
+    expect(swept).toBe(3);
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it("returns 0 and does not throw when the root does not exist yet", async () => {
+    const root = join(dir, "never-created");
+    await expect(sweepWorkspaceRoot(root)).resolves.toBe(0);
+  });
+
+  it("returns 0 for an already-empty root", async () => {
+    const root = join(dir, "workspaces");
+    await mkdir(root, { recursive: true });
+    await expect(sweepWorkspaceRoot(root)).resolves.toBe(0);
+  });
+});
 
 describe("buildProgram", () => {
   it("exposes run, poll-once and review commands", () => {

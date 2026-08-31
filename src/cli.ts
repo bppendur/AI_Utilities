@@ -1,9 +1,11 @@
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { Command } from "commander";
 import { loadConfig } from "./config/load.js";
 import { resolveRepos, type ResolvedRepo } from "./config/schema.js";
 import { GitHubClient } from "./github/client.js";
 import { postReview } from "./github/post-review.js";
-import { createLogger } from "./logger.js";
+import { createLogger, errorMessage } from "./logger.js";
 import { pollOnce, type PollDeps, type PollSummary } from "./poller/poll.js";
 import { runReview } from "./review/run-review.js";
 import { DEFAULT_TEMPLATE_PATH, loadTemplate } from "./runtime/prompt.js";
@@ -33,6 +35,26 @@ export function parsePrNumber(raw: string): number {
   return Number.parseInt(trimmed, 10);
 }
 
+/**
+ * Removes everything directly under `root` and reports how many entries
+ * were removed. Nothing under `WORKSPACE_ROOT` is ever needed across a
+ * restart (each entry is a scratch clone for one already-completed or
+ * in-flight review), so a crash, `SIGKILL`, or unclean restart otherwise
+ * leaves full clones behind forever with nothing ever sweeping them. A
+ * missing root (nothing has ever run yet) is not an error — just nothing to
+ * sweep.
+ */
+export async function sweepWorkspaceRoot(root: string): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await readdir(root);
+  } catch {
+    return 0;
+  }
+  await Promise.all(entries.map((entry) => rm(join(root, entry), { recursive: true, force: true })));
+  return entries.length;
+}
+
 export async function buildDeps(): Promise<{ repos: ResolvedRepo[]; deps: PollDeps; intervalMs: number }> {
   const configPath = process.env.CONFIG_PATH ?? "./config/repos.yaml";
   const statePath = process.env.STATE_PATH ?? "./state/state.json";
@@ -40,12 +62,20 @@ export async function buildDeps(): Promise<{ repos: ResolvedRepo[]; deps: PollDe
   const token = requireEnv("GITHUB_TOKEN");
   requireEnv("ANTHROPIC_API_KEY");
 
+  const logger = createLogger("agent");
+  const swept = await sweepWorkspaceRoot(workspaceRoot);
+  if (swept > 0) {
+    logger.info(
+      `Swept ${swept} leftover workspace ${swept === 1 ? "entry" : "entries"} from ${workspaceRoot} on startup`,
+    );
+  }
+
   const config = await loadConfig(configPath);
   const deps: PollDeps = {
     github: GitHubClient.fromToken(token),
     runtime: createRuntime(config.runtime),
     state: await StateStore.open(statePath),
-    logger: createLogger("agent"),
+    logger,
     template: await loadTemplate(DEFAULT_TEMPLATE_PATH),
     token,
     workspaceRoot,
@@ -100,7 +130,7 @@ export async function runLoop(
       deps.logger.info("Poll cycle complete", { ...summary });
     } catch (error) {
       // A bad cycle must never kill the service.
-      deps.logger.error(`Poll cycle failed: ${(error as Error).message}`);
+      deps.logger.error(`Poll cycle failed: ${errorMessage(error)}`);
     }
     if (options.signal.aborted) break;
     await sleep(options.intervalMs, options.signal);

@@ -58,4 +58,67 @@ describe("StateStore", () => {
     const reopened = await StateStore.open(file);
     expect(reopened.hasBeenReviewed(prKey("acme/api", 1))).toBe(false);
   });
+
+  it("drops a malformed per-entry state instead of computing NaN and looping forever", async () => {
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(
+      file,
+      JSON.stringify({
+        prs: {
+          "acme/api#1": { passes: "not-a-number", lastTriggerCommentId: 0 },
+          "acme/api#2": { passes: 2, lastTriggerCommentId: 0 },
+        },
+      }),
+      "utf8",
+    );
+    const store = await StateStore.open(file);
+    // Malformed entry dropped — treated as never-reviewed, not stuck forever.
+    expect(store.hasBeenReviewed(prKey("acme/api", 1))).toBe(false);
+    expect(store.passCount(prKey("acme/api", 1))).toBe(0);
+    // Well-shaped entry alongside it is unaffected.
+    expect(store.hasBeenReviewed(prKey("acme/api", 2))).toBe(true);
+  });
+
+  describe("consecutive auto-review failures", () => {
+    it("increments the failure count per key", async () => {
+      const store = await StateStore.open(file);
+      const key = prKey("acme/api", 3);
+      expect(store.failureCount(key)).toBe(0);
+      expect(await store.recordFailure(key)).toBe(1);
+      expect(await store.recordFailure(key)).toBe(2);
+      expect(store.failureCount(key)).toBe(2);
+    });
+
+    it("clears the failure count on a successful pass", async () => {
+      const store = await StateStore.open(file);
+      const key = prKey("acme/api", 4);
+      await store.recordFailure(key);
+      await store.recordFailure(key);
+      expect(store.failureCount(key)).toBe(2);
+      await store.recordPass(key);
+      expect(store.failureCount(key)).toBe(0);
+    });
+
+    it("tracks failures independently per PR key", async () => {
+      const store = await StateStore.open(file);
+      const keyA = prKey("acme/api", 5);
+      const keyB = prKey("acme/api", 6);
+      await store.recordFailure(keyA);
+      await store.recordFailure(keyA);
+      await store.recordFailure(keyA);
+      expect(store.failureCount(keyA)).toBe(3);
+      expect(store.failureCount(keyB)).toBe(0);
+    });
+
+    it("survives a reopen", async () => {
+      const key = prKey("acme/api", 7);
+      const first = await StateStore.open(file);
+      await first.recordFailure(key);
+      await first.recordFailure(key);
+      const reopened = await StateStore.open(file);
+      expect(reopened.failureCount(key)).toBe(2);
+    });
+  });
 });

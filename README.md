@@ -12,8 +12,12 @@ requests with a per-repo role, posting findings as inline PR comments.
    commit into a scratch directory (the harness itself shells out to `git`
    for this — see `src/workspace/checkout.ts`).
 3. Headless Claude Code (`claude -p --output-format json`) reviews it there
-   and returns `{ summary, findings[] }`. See **Agent tool access** below
-   for exactly what the agent can and cannot do while it does this.
+   and returns `{ summary, findings[] }`. The rendered prompt (which embeds
+   the full diff and can be very large) is piped to the CLI on **stdin**,
+   never passed as a command-line argument — argv has a hard OS length limit
+   (~32KB on Windows) that an ordinary-sized diff can exceed. See **Agent
+   tool access** below for exactly what the agent can and cannot do while it
+   does this.
 4. Findings are posted as a GitHub review with `event: "COMMENT"` — this
    service never approves a PR and never requests changes.
 5. The pass is recorded so restarts never double-review.
@@ -28,6 +32,18 @@ npm run build
 node dist/index.js poll-once  # verify before running as a service
 ```
 
+> **Warning — first-run mass review.** "Newly-opened" is enforced only by
+> the PR's *absence from the local state file*, not by an actual creation
+> date. The very first time you point this service at a repo, **every** open
+> PR that matches your filter looks "new" to it. A repo with 40 open PRs
+> gets 40 clones, 40 paid model runs, and **40 reviews posted to real,
+> possibly-external PRs** on the first cycle — this is not a dry run and
+> there is no undo. **Mitigation:** before the first run, add
+> `created:>=YYYY-MM-DD` (today's date, or later) to that repo's `filter` in
+> `config/repos.yaml` so only PRs opened from that point forward are picked
+> up; remove it (or leave it) once you've confirmed the service behaves as
+> expected.
+
 `GITHUB_TOKEN` needs the `repo` scope. `ANTHROPIC_API_KEY` is mandatory: the
 service runs unattended and cannot use an interactive `claude login`.
 
@@ -36,6 +52,17 @@ The `claude` CLI (`@anthropic-ai/claude-code`) and `git` must both be on
 for a bare-metal/Windows install, `npm install -g @anthropic-ai/claude-code`
 and a system `git` are your responsibility (see
 `docs/windows-service.md` for a note on service-account `PATH`).
+
+> **Run exactly one instance per state file.** `state/state.json` has no
+> locking. Two processes pointed at the same state file each hold their own
+> full copy of it in memory; whichever writes last wins, silently losing the
+> other's recorded passes and trigger-comment markers — the practical effect
+> is duplicate reviews posted to the same real PR. Never run `run` and
+> `poll-once` against the same state file at the same time, and never run
+> two `run` processes against it either. In particular, **do not** run the
+> `node dist/index.js poll-once` verification step above while the service
+> (`run`, e.g. under NSSM) is already running against the same state file —
+> see `docs/windows-service.md` for the same note in the service context.
 
 ## Commands
 
@@ -121,6 +148,23 @@ the bot approve a malicious PR.
 (`src/runtime/index.ts`) that throws until its adapter is written — for
 Codex-based review today, use Codex's own GitHub App with
 `## Code Review Rules` in the repo's `AGENTS.md`.
+
+## Known risks / verify before deployment
+
+- **Deprecated GitHub search endpoint.** `src/github/client.ts`'s
+  `searchPullRequestNumbers` calls `octokit.rest.search.issuesAndPullRequests`,
+  which `@octokit/rest@21.1.1` marks deprecated — GitHub is migrating this
+  endpoint. This has **not** been changed as part of this fix wave; doing so
+  cannot be verified without live access to confirm the replacement's
+  behavior matches. Two consequences to check before relying on the service
+  in production: (1) Octokit may emit a deprecation warning on every single
+  poll cycle (harmless but noisy in logs); (2) verify both query shapes this
+  service sends — the auto-discovery filter query
+  (`repo:<owner>/<name> is:pr is:open <filter>`) and the quoted manual
+  trigger query (`repo:<owner>/<name> is:pr is:open "<phrase>" in:comments`,
+  see `src/github/queries.ts`) — still return the expected results against
+  live GitHub, since a migrated endpoint could subtly change matching
+  behavior.
 
 ## Deployment
 

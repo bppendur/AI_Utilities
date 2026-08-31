@@ -1,7 +1,19 @@
 import type { ResolvedRepo } from "../config/schema.js";
 import { buildAutoQuery, buildTriggerQuery } from "../github/queries.js";
+import { errorMessage } from "../logger.js";
 import type { ReviewDeps, runReview as RunReviewFn } from "../review/run-review.js";
 import { prKey } from "../state/store.js";
+
+/**
+ * How many consecutive auto-review failures a PR may accumulate before the
+ * auto pass stops retrying it. Without a cap, a PR that fails every time
+ * (a model timeout, unparseable output, a token missing write scope) gets
+ * retried every single poll cycle forever — unbounded clones and paid model
+ * invocations for something that will never succeed on its own. A human
+ * commenting the trigger phrase (the manual path) still gets a fresh
+ * attempt regardless of this cap; only the automatic path is gated.
+ */
+export const MAX_CONSECUTIVE_AUTO_FAILURES = 3;
 
 export interface PollDeps extends ReviewDeps {
   triggerPhrase: string;
@@ -40,6 +52,12 @@ export async function pollOnce(
             summary.skipped += 1;
             continue;
           }
+          if (deps.state.failureCount(key) >= MAX_CONSECUTIVE_AUTO_FAILURES) {
+            // Already abandoned — the one-time log happened when the cap
+            // was reached below. Skip silently every cycle after that.
+            summary.skipped += 1;
+            continue;
+          }
           const outcome = await deps.runReview({ repo, prNumber, trigger: "auto", deps });
           if (outcome.reviewed) {
             summary.autoReviewed += 1;
@@ -49,12 +67,19 @@ export async function pollOnce(
           }
         } catch (error) {
           summary.errors += 1;
-          deps.logger.error(`Auto review failed for ${key}: ${(error as Error).message}`);
+          deps.logger.error(`Auto review failed for ${key}: ${errorMessage(error)}`);
+          const failures = await deps.state.recordFailure(key);
+          if (failures === MAX_CONSECUTIVE_AUTO_FAILURES) {
+            deps.logger.warn(
+              `Abandoning auto review of ${key} after ${failures} consecutive failures — ` +
+                `it will not be retried automatically again. Comment the trigger phrase to force a retry.`,
+            );
+          }
         }
       }
     } catch (error) {
       summary.errors += 1;
-      deps.logger.error(`Auto discovery failed for ${repo.fullName}: ${(error as Error).message}`);
+      deps.logger.error(`Auto discovery failed for ${repo.fullName}: ${errorMessage(error)}`);
     }
 
     // Pass 2 — manual triggers. Deliberately ignores the filter.
@@ -102,13 +127,13 @@ export async function pollOnce(
           summary.manualReviewed += 1;
         } catch (error) {
           summary.errors += 1;
-          deps.logger.error(`Manual review failed for ${key}: ${(error as Error).message}`);
+          deps.logger.error(`Manual review failed for ${key}: ${errorMessage(error)}`);
         }
       }
     } catch (error) {
       summary.errors += 1;
       deps.logger.error(
-        `Trigger discovery failed for ${repo.fullName}: ${(error as Error).message}`,
+        `Trigger discovery failed for ${repo.fullName}: ${errorMessage(error)}`,
       );
     }
   }

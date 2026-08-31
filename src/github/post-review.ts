@@ -1,5 +1,6 @@
 import type { Octokit } from "@octokit/rest";
 import type { PullRequestRef } from "./client.js";
+import { defaultSecrets, redact } from "../logger.js";
 import type { ReviewResult } from "../runtime/types.js";
 
 function findingBody(severity: string, body: string): string {
@@ -15,6 +16,24 @@ function summaryWithFindings(result: ReviewResult): string {
 }
 
 /**
+ * Redacts known secret values (`GITHUB_TOKEN`, `ANTHROPIC_API_KEY`) out of
+ * the model's own output before it is posted. The reviewed content the
+ * model reads (PR title/body/diff) is attacker-controlled, so a
+ * sufficiently crafted prompt injection could try to make the model echo a
+ * secret value back into its `summary` or a finding's `body` — which this
+ * service would otherwise post verbatim to a public PR comment. Reuses the
+ * same secret list `createLogger` redacts from log lines, rather than
+ * hardcoding, so both stay in sync.
+ */
+function sanitizeReviewResult(result: ReviewResult): ReviewResult {
+  const secrets = defaultSecrets();
+  return {
+    summary: redact(result.summary, secrets),
+    findings: result.findings.map((f) => ({ ...f, body: redact(f.body, secrets) })),
+  };
+}
+
+/**
  * Posts the review. Always `event: "COMMENT"` — this service never approves
  * a PR nor requests changes. If GitHub rejects the inline positions (422,
  * typically a line outside the diff), retries once as a summary-only review
@@ -24,8 +43,9 @@ export async function postReview(
   octokit: Octokit,
   ref: PullRequestRef,
   headSha: string,
-  result: ReviewResult,
+  rawResult: ReviewResult,
 ): Promise<{ inline: boolean }> {
+  const result = sanitizeReviewResult(rawResult);
   const base = {
     owner: ref.owner,
     repo: ref.repo,

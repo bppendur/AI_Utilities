@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedRepo } from "../../src/config/schema.js";
-import { pollOnce } from "../../src/poller/poll.js";
+import { MAX_CONSECUTIVE_AUTO_FAILURES, pollOnce } from "../../src/poller/poll.js";
 import { StateStore } from "../../src/state/store.js";
 
 const repo: ResolvedRepo = {
@@ -244,5 +244,120 @@ describe("pollOnce", () => {
     expect(summary.autoReviewed).toBe(1);
     expect(summary.manualReviewed).toBe(0);
     expect(deps.state.lastTriggerCommentId("acme/api#30")).toBe(900);
+  });
+
+  describe("auto-review failure cap", () => {
+    it("stops retrying a PR in the auto pass once it hits the cap", async () => {
+      const runReview = vi.fn().mockRejectedValue(new Error("model timeout"));
+      const deps = await makeDeps({
+        github: {
+          searchPullRequestNumbers: vi.fn().mockImplementation((q: string) =>
+            Promise.resolve(q.includes("in:comments") ? [] : [50]),
+          ),
+          listTriggerComments: vi.fn().mockResolvedValue([]),
+          octokit: {} as never,
+        },
+        runReview,
+      });
+
+      for (let i = 0; i < MAX_CONSECUTIVE_AUTO_FAILURES; i++) {
+        await pollOnce([repo], deps);
+      }
+      expect(runReview).toHaveBeenCalledTimes(MAX_CONSECUTIVE_AUTO_FAILURES);
+      expect(deps.state.failureCount("acme/api#50")).toBe(MAX_CONSECUTIVE_AUTO_FAILURES);
+
+      // One more cycle: the cap has been reached, so runReview must not be
+      // called again — the PR is abandoned by the auto pass.
+      const summary = await pollOnce([repo], deps);
+      expect(runReview).toHaveBeenCalledTimes(MAX_CONSECUTIVE_AUTO_FAILURES);
+      expect(summary.skipped).toBeGreaterThan(0);
+    });
+
+    it("logs the abandonment exactly once, not on every subsequent cycle", async () => {
+      const runReview = vi.fn().mockRejectedValue(new Error("model timeout"));
+      const deps = await makeDeps({
+        github: {
+          searchPullRequestNumbers: vi.fn().mockImplementation((q: string) =>
+            Promise.resolve(q.includes("in:comments") ? [] : [51]),
+          ),
+          listTriggerComments: vi.fn().mockResolvedValue([]),
+          octokit: {} as never,
+        },
+        runReview,
+      });
+
+      for (let i = 0; i < MAX_CONSECUTIVE_AUTO_FAILURES; i++) {
+        await pollOnce([repo], deps);
+      }
+      const warnCallsAtCap = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(warnCallsAtCap).toBe(1);
+
+      await pollOnce([repo], deps);
+      await pollOnce([repo], deps);
+      expect((deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.length).toBe(warnCallsAtCap);
+    });
+
+    it("clears the failure count for a PR that eventually succeeds", async () => {
+      // A real runReview records the pass on state itself (run-review.ts) —
+      // the mock here does the same so this test exercises pollOnce's own
+      // failure-count bookkeeping against realistic state transitions.
+      const runReview = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockImplementationOnce(async ({ deps: d }: { deps: { state: StateStore } }) => {
+          await d.state.recordPass("acme/api#52");
+          return { reviewed: true, passNumber: 1, findingCount: 0, inline: true };
+        });
+      const deps = await makeDeps({
+        github: {
+          searchPullRequestNumbers: vi.fn().mockImplementation((q: string) =>
+            Promise.resolve(q.includes("in:comments") ? [] : [52]),
+          ),
+          listTriggerComments: vi.fn().mockResolvedValue([]),
+          octokit: {} as never,
+        },
+        runReview,
+      });
+
+      await pollOnce([repo], deps);
+      await pollOnce([repo], deps);
+      expect(deps.state.failureCount("acme/api#52")).toBe(2);
+
+      const summary = await pollOnce([repo], deps);
+      expect(summary.autoReviewed).toBe(1);
+      expect(deps.state.failureCount("acme/api#52")).toBe(0);
+      expect(deps.state.hasBeenReviewed("acme/api#52")).toBe(true);
+    });
+
+    it("does not share the failure cap between different PRs", async () => {
+      const runReview = vi
+        .fn()
+        .mockImplementation(
+          async ({ prNumber, deps: d }: { prNumber: number; deps: { state: StateStore } }) => {
+            if (prNumber === 60) return Promise.reject(new Error("always fails"));
+            await d.state.recordPass(`acme/api#${prNumber}`);
+            return { reviewed: true, passNumber: 1, findingCount: 0, inline: true };
+          },
+        );
+      const deps = await makeDeps({
+        github: {
+          searchPullRequestNumbers: vi.fn().mockImplementation((q: string) =>
+            Promise.resolve(q.includes("in:comments") ? [] : [60, 61]),
+          ),
+          listTriggerComments: vi.fn().mockResolvedValue([]),
+          octokit: {} as never,
+        },
+        runReview,
+      });
+
+      for (let i = 0; i < MAX_CONSECUTIVE_AUTO_FAILURES; i++) {
+        await pollOnce([repo], deps);
+      }
+      expect(deps.state.failureCount("acme/api#60")).toBe(MAX_CONSECUTIVE_AUTO_FAILURES);
+      // 61 succeeded on its very first attempt and is unaffected by 60's cap.
+      expect(deps.state.failureCount("acme/api#61")).toBe(0);
+      expect(deps.state.hasBeenReviewed("acme/api#61")).toBe(true);
+    });
   });
 });

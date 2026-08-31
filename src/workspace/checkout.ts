@@ -109,24 +109,26 @@ export interface CreateWorkspaceOptions {
   owner: string;
   name: string;
   prNumber: number;
-  baseRef: string;
   token: string;
   rootDir: string;
 }
 
 /**
- * Clones the PR head (plus the base branch, so `git diff base...HEAD` works)
- * into a scratch directory the read-only agent explores.
+ * Clones the PR head into a scratch directory the read-only agent explores.
  *
- * `baseRef` is fetched before the PR head so that `FETCH_HEAD` — which
- * always resolves to whichever ref was fetched last — resolves to the PR's
- * head commit rather than the base branch.
+ * Only the PR head ref is fetched — the base branch used to be fetched too
+ * ("so `git diff base...HEAD` works"), but the reviewing agent has no Bash
+ * access (see `src/runtime/claude.ts`), so nothing can ever run that diff;
+ * fetching objects nothing will use only doubled every checkout's network
+ * cost. `checkoutRef: "FETCH_HEAD"` still applies unchanged from
+ * `createWorkspaceFromRef` — it resolves to the PR head because that is now
+ * the only (and therefore last) ref fetched.
  */
 export async function createWorkspace(opts: CreateWorkspaceOptions): Promise<Workspace> {
   return createWorkspaceFromRef({
     remote: buildRemoteUrl(opts.owner, opts.name),
     env: buildAuthEnv(opts.token),
-    refs: [opts.baseRef, `pull/${opts.prNumber}/head`],
+    refs: [`pull/${opts.prNumber}/head`],
     checkoutRef: "FETCH_HEAD",
     rootDir: opts.rootDir,
     label: `${opts.owner}-${opts.name}-${opts.prNumber}`,

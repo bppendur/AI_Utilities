@@ -58,10 +58,27 @@ export const DISALLOWED_TOOLS = [
   "WebSearch",
 ];
 
-export function buildClaudeArgs(prompt: string): string[] {
+/**
+ * The prompt is deliberately NOT one of these argv elements — it goes on
+ * stdin instead (see `createClaudeRuntime` below). `-p` with no following
+ * argument reads the prompt from stdin; verified empirically against the
+ * installed CLI (`echo "say hi" | claude -p --output-format json`), which
+ * parsed the flags and returned a normal JSON result. Two independent
+ * reasons this must stay stdin, not argv, ever again:
+ *   1. Windows caps a whole command line at ~32,767 chars and Linux caps a
+ *      single argv element at 131,072 bytes; `MAX_DIFF_CHARS` in
+ *      `src/github/client.ts` alone allows a 200,000-char diff into the
+ *      rendered prompt, which blew both limits (`ENAMETOOLONG`) before this
+ *      fix — ordinary PRs could not be reviewed at all.
+ *   2. argv is visible in the host process table (`ps`/`/proc/<pid>/cmdline`
+ *      on Linux, Task Manager/WMI on Windows) and gets echoed into execa's
+ *      own error messages on a non-zero exit. The prompt embeds
+ *      attacker-controlled PR content (title, body, diff) — keeping it off
+ *      argv keeps that content out of both.
+ */
+export function buildClaudeArgs(): string[] {
   return [
     "-p",
-    prompt,
     "--output-format",
     "json",
     "--allowed-tools",
@@ -78,10 +95,29 @@ export function buildClaudeArgs(prompt: string): string[] {
 export type ExecFn = (
   file: string,
   args: string[],
-  opts: { cwd: string; timeout: number },
+  opts: { cwd: string; timeout: number; input: string; env: Record<string, string | undefined> },
 ) => Promise<{ stdout: string }>;
 
 const defaultExec: ExecFn = (file, args, opts) => execa(file, args, opts);
+
+/**
+ * The minimal env the `claude` CLI is spawned with — deliberately NOT the
+ * full inherited parent environment. `execa` inherits the whole parent env
+ * by default, which would otherwise put `GITHUB_TOKEN` into the environment
+ * of a process whose `cwd` is an attacker-controlled PR checkout. Only what
+ * the CLI needs to start is passed through: `ANTHROPIC_API_KEY` for auth,
+ * `PATH` to resolve `node`/other binaries, and `HOME`/`USERPROFILE` (both,
+ * since Windows uses `USERPROFILE` and POSIX uses `HOME`) for its config
+ * directory. `GITHUB_TOKEN` is never included.
+ */
+function buildRuntimeEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of ["ANTHROPIC_API_KEY", "PATH", "HOME", "USERPROFILE"]) {
+    const value = process.env[name];
+    if (value) env[name] = value;
+  }
+  return env;
+}
 
 /** `claude -p --output-format json` wraps the answer in `{ result: "..." }`. */
 function unwrapEnvelope(stdout: string): string {
@@ -103,9 +139,11 @@ export function createClaudeRuntime(exec: ExecFn = defaultExec): ReviewRuntime {
           "ANTHROPIC_API_KEY is required: this service runs unattended and cannot use an interactive Claude login",
         );
       }
-      const { stdout } = await exec("claude", buildClaudeArgs(input.prompt), {
+      const { stdout } = await exec("claude", buildClaudeArgs(), {
         cwd: input.workspaceDir,
         timeout: input.timeoutMs,
+        input: input.prompt,
+        env: buildRuntimeEnv(),
       });
       return parseReviewResult(unwrapEnvelope(stdout));
     },

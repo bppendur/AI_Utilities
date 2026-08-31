@@ -16,6 +16,16 @@ defaults:
     Do not comment on formatting that a linter would catch.
   # Raw GitHub search qualifiers. GitHub applies these server-side; the
   # service adds `repo:<owner>/<name> is:pr is:open` automatically.
+  #
+  # WARNING — first-run mass review: "newly-opened" is enforced only by a
+  # PR's absence from the local state file, not an actual creation date. The
+  # first time you point the service at a repo, every currently-open PR
+  # matching this filter looks "new" — a repo with 40 open PRs gets 40
+  # clones, 40 paid model runs, and 40 reviews posted to real PRs on cycle
+  # one, with no undo. Mitigation for the first run only: add
+  # `created:>=YYYY-MM-DD` (today or later) to the filter below, e.g.
+  # `"draft:false created:>=2026-08-31 -author:dependabot[bot]"`, then
+  # remove it once you've confirmed the service behaves as expected.
   filter: "draft:false -author:dependabot[bot] -author:renovate[bot]"
 
 repos:

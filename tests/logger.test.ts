@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createLogger, redact } from "../src/logger.js";
+import { createLogger, errorMessage, redact } from "../src/logger.js";
 
 describe("redact", () => {
   it("replaces every occurrence of each secret", () => {
@@ -29,5 +29,41 @@ describe("createLogger", () => {
     log.info("cloning https://ghp_supersecret@github.com/o/r");
     expect(spy.mock.calls[0]![0]).not.toContain("ghp_supersecret");
     spy.mockRestore();
+  });
+
+  it("routes error and warn to stderr, not stdout", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = createLogger("agent");
+
+    log.error("something broke");
+    log.warn("heads up");
+    log.info("all fine");
+
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy.mock.calls[0]![0]).toContain("[ERROR]");
+    expect(errorSpy.mock.calls[0]![0]).toContain("something broke");
+    expect(errorSpy.mock.calls[1]![0]).toContain("[WARN]");
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(logSpy.mock.calls[0]![0]).toContain("[INFO]");
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+});
+
+describe("errorMessage", () => {
+  it("returns the message of a real Error", () => {
+    expect(errorMessage(new Error("boom"))).toBe("boom");
+  });
+
+  it("returns a thrown string as-is", () => {
+    expect(errorMessage("plain string failure")).toBe("plain string failure");
+  });
+
+  it("never returns 'undefined' for a non-Error rejection", () => {
+    expect(errorMessage({ code: "ENOENT" })).not.toBe("undefined");
+    expect(errorMessage(42)).not.toBe("undefined");
+    expect(errorMessage(null)).not.toBe("undefined");
   });
 });
