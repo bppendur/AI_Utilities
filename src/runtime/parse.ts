@@ -2,12 +2,8 @@ import type { Finding, ReviewResult, Severity } from "./types.js";
 
 const SEVERITIES: Severity[] = ["critical", "major", "minor", "nit"];
 
-/** Pull the first balanced top-level JSON object out of arbitrary model text. */
-function extractJsonObject(raw: string): string {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const haystack = fenced?.[1] ?? raw;
-  const start = haystack.indexOf("{");
-  if (start === -1) throw new Error("Runtime returned no JSON object");
+/** Extract a balanced JSON object from a string, handling string escapes. */
+function scanBalancedBraces(haystack: string, start: number): string | null {
   let depth = 0;
   let inString = false;
   let escaped = false;
@@ -26,7 +22,74 @@ function extractJsonObject(raw: string): string {
       if (depth === 0) return haystack.slice(start, i + 1);
     }
   }
-  throw new Error("Runtime returned no JSON object (unbalanced braces)");
+  return null;
+}
+
+/** Extract all JSON-like objects from a candidate string. */
+function extractAllJsons(candidate: string): Array<{ json: string; hasSummary: boolean }> {
+  const results: Array<{ json: string; hasSummary: boolean }> = [];
+  try {
+    let start = candidate.indexOf("{");
+    while (start !== -1) {
+      const balanced = scanBalancedBraces(candidate, start);
+      if (balanced) {
+        try {
+          const parsed = JSON.parse(balanced);
+          if (parsed && typeof parsed === "object") {
+            const hasSummary = typeof parsed.summary === "string" && parsed.summary.trim().length > 0;
+            results.push({ json: balanced, hasSummary });
+          }
+        } catch {
+          // Not valid JSON, continue searching
+        }
+      }
+      start = candidate.indexOf("{", start + 1);
+    }
+  } catch {
+    // Ignore unexpected errors
+  }
+  return results;
+}
+
+/** Pull a valid JSON object out of arbitrary model text. Try all candidates. */
+function extractJsonObject(raw: string): string {
+  // Build list of candidates: contents of each fenced block, then raw text
+  const candidates: string[] = [];
+  for (const match of raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) {
+    candidates.push(match[1]!);
+  }
+  candidates.push(raw);
+
+  // Try each candidate
+  for (const candidate of candidates) {
+    const jsons = extractAllJsons(candidate);
+
+    // First, look for one with a summary
+    for (const item of jsons) {
+      if (item.hasSummary) {
+        return item.json;
+      }
+    }
+
+    // If this candidate has any JSON but no summary, note it as a fallback
+    if (jsons.length > 0) {
+      // Found JSON but without summary; continue to next candidate
+      // in case there's a better one with a summary
+      continue;
+    }
+  }
+
+  // If we've exhausted all candidates without finding a summary,
+  // go back and return the first JSON we found (even without summary)
+  // so that parseReviewResult can give the proper error
+  for (const candidate of candidates) {
+    const jsons = extractAllJsons(candidate);
+    if (jsons.length > 0) {
+      return jsons[0]!.json;
+    }
+  }
+
+  throw new Error("Runtime returned no JSON object");
 }
 
 function normaliseSeverity(value: unknown): Severity {
@@ -38,13 +101,28 @@ function stripZeroWidthSpaces(s: string): string {
   return s.replace(/​/g, "");
 }
 
+function normaliseLineNumber(value: unknown): number | null {
+  // Accept only JS numbers that are positive integers, or strings of pure digits
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && value >= 1) return value;
+    return null;
+  }
+  if (typeof value === "string") {
+    if (/^\d+$/.test(value.trim())) {
+      const num = Number.parseInt(value.trim(), 10);
+      return num >= 1 ? num : null;
+    }
+  }
+  return null;
+}
+
 function normaliseFinding(raw: unknown): Finding | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const file = stripZeroWidthSpaces(typeof r.file === "string" ? r.file.trim() : "");
-  const line = Number.parseInt(String(r.line ?? ""), 10);
+  const line = normaliseLineNumber(r.line);
   const body = stripZeroWidthSpaces(typeof r.body === "string" ? r.body.trim() : "");
-  if (!file || !body || Number.isNaN(line) || line < 1) return null;
+  if (!file || !body || line === null) return null;
   return { file, line, severity: normaliseSeverity(r.severity), body };
 }
 

@@ -62,12 +62,42 @@ describe("parseReviewResult", () => {
     const raw = JSON.stringify({
       summary: "ok​summary",
       findings: [
-        { file: "src​/a.ts", line: 1, severity: "major", body: "</div>​ invalid" },
+        { file: "src​/a.ts", line: 1, severity: "major", body: "<​/div> code" },
       ],
     });
     const out = parseReviewResult(raw);
     expect(out.summary).toBe("oksummary");
     expect(out.findings[0]!.file).toBe("src/a.ts");
-    expect(out.findings[0]!.body).toBe("</div> invalid");
+    expect(out.findings[0]!.body).toBe("</div> code");
+  });
+
+  it("parses JSON when prose braces appear before the real answer", () => {
+    const raw = 'I found 2 issues {see below}: {"summary":"s","findings":[]}';
+    const out = parseReviewResult(raw);
+    expect(out.summary).toBe("s");
+    expect(out.findings).toHaveLength(0);
+  });
+
+  it("extracts JSON from the second fenced block when the first has unrelated code", () => {
+    const raw = 'Here is example:\n```js\nconst x = {a: 1};\n```\n\nResult:\n```json\n{"summary":"ok","findings":[]}\n```';
+    const out = parseReviewResult(raw);
+    expect(out.summary).toBe("ok");
+  });
+
+  it("extracts JSON from the second fenced block when first contains valid JSON", () => {
+    const raw = '```\n{"example": "not", "this": "one"}\n```\nActual:\n```json\n{"summary":"correct","findings":[]}\n```';
+    const out = parseReviewResult(raw);
+    expect(out.summary).toBe("correct");
+  });
+
+  it("throws when fenced block has brace-balanced non-JSON and no valid JSON exists elsewhere", () => {
+    const raw = 'Check this:\n```\n{\"incomplete\": \"object}\n```\nNothing else.';
+    expect(() => parseReviewResult(raw)).toThrow(/no JSON object/i);
+  });
+
+  it("skips an object that parses but lacks a summary when a later valid one exists", () => {
+    const raw = '{"findings": []}\n\nBetter answer: {"summary":"valid","findings":[]}';
+    const out = parseReviewResult(raw);
+    expect(out.summary).toBe("valid");
   });
 });
