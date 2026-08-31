@@ -107,4 +107,66 @@ describe("GitHubClient", () => {
     expect(pr.diff.length).toBeLessThan(300_000);
     expect(pr.diff).toContain("[diff truncated]");
   });
+
+  it("paginates through multiple pages of changed files", async () => {
+    const octo = fakeOctokit();
+    // Page 1: 100 items (full page)
+    // Page 2: 25 items (partial page — triggers stop)
+    octo.rest.pulls.listFiles = vi.fn().mockImplementation(({ page }) => {
+      if (page === 1) {
+        return Promise.resolve({
+          data: Array.from({ length: 100 }, (_, i) => ({ filename: `src/file${i}.ts` })),
+        });
+      } else if (page === 2) {
+        return Promise.resolve({
+          data: Array.from({ length: 25 }, (_, i) => ({ filename: `src/file${100 + i}.ts` })),
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const client = new GitHubClient(octo as never);
+    const pr = await client.getPullRequest(ref);
+    // Verify both pages are present
+    expect(pr.changedFiles).toHaveLength(125);
+    expect(pr.changedFiles[0]).toBe("src/file0.ts");
+    expect(pr.changedFiles[99]).toBe("src/file99.ts");
+    expect(pr.changedFiles[100]).toBe("src/file100.ts");
+    expect(pr.changedFiles[124]).toBe("src/file124.ts");
+    // Verify pagination stopped after page 2 (partial page)
+    expect(octo.rest.pulls.listFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it("paginates through multiple pages of trigger comments", async () => {
+    const octo = fakeOctokit();
+    // Page 1: 100 items (full page, trigger is at index 99)
+    // Page 2: 50 items (partial page, trigger is at index 0)
+    octo.rest.issues.listComments = vi.fn().mockImplementation(({ page }) => {
+      if (page === 1) {
+        const items = Array.from({ length: 100 }, (_, i) => ({
+          id: i,
+          user: { login: "bhanu" },
+          created_at: "2026-01-01T00:00:00Z",
+          body: i === 99 ? "@review-agent review" : "normal comment",
+        }));
+        return Promise.resolve({ data: items });
+      } else if (page === 2) {
+        const items = Array.from({ length: 50 }, (_, i) => ({
+          id: 100 + i,
+          user: { login: "bhanu" },
+          created_at: "2026-01-01T00:00:00Z",
+          body: i === 0 ? "@review-agent review" : "normal comment",
+        }));
+        return Promise.resolve({ data: items });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const client = new GitHubClient(octo as never);
+    const comments = await client.listTriggerComments(ref, "@review-agent review");
+    // Should find trigger phrases from both pages
+    expect(comments).toHaveLength(2);
+    expect(comments[0]).toMatchObject({ id: 99 });
+    expect(comments[1]).toMatchObject({ id: 100 });
+    // Verify pagination stopped after page 2 (partial page)
+    expect(octo.rest.issues.listComments).toHaveBeenCalledTimes(2);
+  });
 });
