@@ -28,25 +28,21 @@ function scanBalancedBraces(haystack: string, start: number): string | null {
 /** Extract all JSON-like objects from a candidate string. */
 function extractAllJsons(candidate: string): Array<{ json: string; hasSummary: boolean }> {
   const results: Array<{ json: string; hasSummary: boolean }> = [];
-  try {
-    let start = candidate.indexOf("{");
-    while (start !== -1) {
-      const balanced = scanBalancedBraces(candidate, start);
-      if (balanced) {
-        try {
-          const parsed = JSON.parse(balanced);
-          if (parsed && typeof parsed === "object") {
-            const hasSummary = typeof parsed.summary === "string" && parsed.summary.trim().length > 0;
-            results.push({ json: balanced, hasSummary });
-          }
-        } catch {
-          // Not valid JSON, continue searching
+  let start = candidate.indexOf("{");
+  while (start !== -1) {
+    const balanced = scanBalancedBraces(candidate, start);
+    if (balanced) {
+      try {
+        const parsed = JSON.parse(balanced);
+        if (parsed && typeof parsed === "object") {
+          const hasSummary = typeof parsed.summary === "string" && parsed.summary.trim().length > 0;
+          results.push({ json: balanced, hasSummary });
         }
+      } catch {
+        // Not valid JSON, continue searching
       }
-      start = candidate.indexOf("{", start + 1);
     }
-  } catch {
-    // Ignore unexpected errors
+    start = candidate.indexOf("{", start + 1);
   }
   return results;
 }
@@ -60,32 +56,27 @@ function extractJsonObject(raw: string): string {
   }
   candidates.push(raw);
 
-  // Try each candidate
+  // Compute results for all candidates once
+  const allResults: Array<{ jsons: Array<{ json: string; hasSummary: boolean }>; candidate: string }> = [];
   for (const candidate of candidates) {
-    const jsons = extractAllJsons(candidate);
+    allResults.push({ jsons: extractAllJsons(candidate), candidate });
+  }
 
-    // First, look for one with a summary
-    for (const item of jsons) {
+  // First, look for one with a summary
+  for (const result of allResults) {
+    for (const item of result.jsons) {
       if (item.hasSummary) {
         return item.json;
       }
-    }
-
-    // If this candidate has any JSON but no summary, note it as a fallback
-    if (jsons.length > 0) {
-      // Found JSON but without summary; continue to next candidate
-      // in case there's a better one with a summary
-      continue;
     }
   }
 
   // If we've exhausted all candidates without finding a summary,
   // go back and return the first JSON we found (even without summary)
   // so that parseReviewResult can give the proper error
-  for (const candidate of candidates) {
-    const jsons = extractAllJsons(candidate);
-    if (jsons.length > 0) {
-      return jsons[0]!.json;
+  for (const result of allResults) {
+    if (result.jsons.length > 0) {
+      return result.jsons[0]!.json;
     }
   }
 
@@ -97,8 +88,9 @@ function normaliseSeverity(value: unknown): Severity {
   return (SEVERITIES as string[]).includes(lowered) ? (lowered as Severity) : "minor";
 }
 
+
 function stripZeroWidthSpaces(s: string): string {
-  return s.replace(/​/g, "");
+  return s.replace(/\u200B/g, "");
 }
 
 function normaliseLineNumber(value: unknown): number | null {
