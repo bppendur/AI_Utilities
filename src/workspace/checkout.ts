@@ -7,8 +7,31 @@ export interface Workspace {
   cleanup(): Promise<void>;
 }
 
-export function buildCloneUrl(owner: string, name: string, token: string): string {
-  return `https://x-access-token:${token}@github.com/${owner}/${name}.git`;
+/**
+ * Credential-free clone URL for `owner/name`. Authentication is supplied
+ * separately via `buildAuthEnv`, so this URL is safe to pass as a process
+ * argument (visible in `ps`/`/proc/<pid>/cmdline`) and safe for git to
+ * persist in the scratch repo's `.git/config`.
+ */
+export function buildRemoteUrl(owner: string, name: string): string {
+  return `https://github.com/${owner}/${name}.git`;
+}
+
+/**
+ * Environment variables that authenticate git against github.com without
+ * ever putting the token on the command line or in `.git/config` — the
+ * same `http.extraheader`-via-env approach GitHub's own `actions/checkout`
+ * uses. Git reads `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`
+ * as an ephemeral, process-scoped config layer that is never written to
+ * disk.
+ */
+export function buildAuthEnv(token: string): Record<string, string> {
+  const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+  return {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+    GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+  };
 }
 
 const CREDENTIALED_URL = /https:\/\/[^@\s]+@/g;
@@ -38,6 +61,13 @@ export interface CreateWorkspaceFromRefOptions {
   checkoutRef: string;
   rootDir: string;
   label: string;
+  /**
+   * Extra environment variables merged into every git invocation this call
+   * makes (e.g. the `GIT_CONFIG_*` trio from `buildAuthEnv`). Omit for an
+   * unauthenticated / local remote — behaviour is then unchanged from
+   * passing no env at all.
+   */
+  env?: Record<string, string>;
 }
 
 /**
@@ -50,9 +80,10 @@ export async function createWorkspaceFromRef(
 ): Promise<Workspace> {
   await mkdir(opts.rootDir, { recursive: true });
   const dir = await mkdtemp(join(opts.rootDir, `${opts.label}-`));
-  const git = (args: string[]) => execa("git", ["-C", dir, ...args]);
+  const env = { ...opts.env };
+  const git = (args: string[]) => execa("git", ["-C", dir, ...args], { env });
   try {
-    await execa("git", ["init", "-q", dir]);
+    await execa("git", ["init", "-q", dir], { env });
     // Disable line-ending translation so checked-out file content matches the
     // repository's stored blobs exactly, regardless of the host's global git
     // config (Windows commonly defaults core.autocrlf to true).
@@ -93,7 +124,8 @@ export interface CreateWorkspaceOptions {
  */
 export async function createWorkspace(opts: CreateWorkspaceOptions): Promise<Workspace> {
   return createWorkspaceFromRef({
-    remote: buildCloneUrl(opts.owner, opts.name, opts.token),
+    remote: buildRemoteUrl(opts.owner, opts.name),
+    env: buildAuthEnv(opts.token),
     refs: [opts.baseRef, `pull/${opts.prNumber}/head`],
     checkoutRef: "FETCH_HEAD",
     rootDir: opts.rootDir,

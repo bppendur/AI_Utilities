@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  buildCloneUrl,
+  buildAuthEnv,
+  buildRemoteUrl,
   createWorkspaceFromRef,
   sanitizeGitError,
 } from "../../src/workspace/checkout.js";
@@ -30,11 +31,29 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-describe("buildCloneUrl", () => {
-  it("embeds the token as basic auth so git can fetch private repos", () => {
-    expect(buildCloneUrl("acme", "api", "ghp_tok")).toBe(
-      "https://x-access-token:ghp_tok@github.com/acme/api.git",
-    );
+describe("buildRemoteUrl", () => {
+  it("builds a credential-free clone URL", () => {
+    const url = buildRemoteUrl("acme", "api");
+    expect(url).toBe("https://github.com/acme/api.git");
+    expect(url).not.toContain("@");
+    expect(url).not.toContain("ghp_tok");
+  });
+});
+
+describe("buildAuthEnv", () => {
+  it("authenticates via a process-scoped GIT_CONFIG extraheader, never a raw token in plaintext", () => {
+    const env = buildAuthEnv("ghp_tok");
+
+    expect(env["GIT_CONFIG_COUNT"]).toBe("1");
+    expect(env["GIT_CONFIG_KEY_0"]).toBe("http.https://github.com/.extraheader");
+
+    const value = env["GIT_CONFIG_VALUE_0"];
+    expect(value).toBeDefined();
+    expect(value?.startsWith("Authorization: Basic ")).toBe(true);
+    expect(value).not.toContain("ghp_tok");
+
+    const encoded = value?.slice("Authorization: Basic ".length) ?? "";
+    expect(Buffer.from(encoded, "base64").toString("utf8")).toBe("x-access-token:ghp_tok");
   });
 });
 
