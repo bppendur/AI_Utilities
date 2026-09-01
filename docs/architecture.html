@@ -1,0 +1,571 @@
+<title>PR Review Agent Architecture</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+  :root {
+    --ground:   #F2F4F3;
+    --surface:  #FBFCFB;
+    --sunken:   #E7ECEA;
+    --ink:      #12211F;
+    --muted:    #566664;
+    --faint:    #8A9997;
+    --rule:     #D2D9D7;
+    --accent:   #0E6A61;
+    --signal:   #B3452B;
+    --shadow:   rgba(18, 33, 31, .07);
+    --display: "Archivo", "Segoe UI", system-ui, sans-serif;
+    --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #0E1615;
+      --surface: #151F1E;
+      --sunken:  #1B2726;
+      --ink:     #DFE7E5;
+      --muted:   #96A8A5;
+      --faint:   #71837F;
+      --rule:    #2B3937;
+      --accent:  #52C4B2;
+      --signal:  #E4886B;
+      --shadow:  rgba(0, 0, 0, .35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #0E1615;
+    --surface: #151F1E;
+    --sunken:  #1B2726;
+    --ink:     #DFE7E5;
+    --muted:   #96A8A5;
+    --faint:   #71837F;
+    --rule:    #2B3937;
+    --accent:  #52C4B2;
+    --signal:  #E4886B;
+    --shadow:  rgba(0, 0, 0, .35);
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 18px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 54px;
+  }
+  .prose { max-width: 68ch; }
+  p { margin: 0 0 1em; }
+  p:last-child { margin-bottom: 0; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  header.masthead { display: flex; flex-direction: column; gap: 16px; }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(38px, 6vw, 60px);
+    line-height: 1.03;
+    letter-spacing: -.024em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 21px;
+    line-height: 1.55;
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 26px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--muted);
+    border-top: 1px solid var(--rule);
+    padding-top: 16px;
+    margin-top: 8px;
+  }
+  .meta b { color: var(--ink); font-weight: 500; }
+
+  section { display: flex; flex-direction: column; gap: 20px; }
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 28px;
+    letter-spacing: -.014em;
+    margin: 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: .14em;
+    display: block;
+    margin-bottom: 9px;
+  }
+  h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 16.5px;
+    margin: 6px 0 -6px;
+  }
+
+  figure {
+    margin: 6px 0 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 26px 24px 18px;
+    box-shadow: 0 1px 2px var(--shadow);
+    overflow-x: auto;
+  }
+  figure svg { display: block; width: 100%; min-width: 640px; height: auto; }
+  figcaption {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--muted);
+    margin-top: 20px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    max-width: 96ch;
+  }
+  figcaption b { color: var(--ink); font-weight: 500; }
+
+  .d-group { fill: none; stroke: var(--rule); stroke-width: 1.5; stroke-dasharray: 5 5; }
+  .d-box   { fill: var(--surface); stroke: var(--rule); stroke-width: 1.5; }
+  .d-box-a { fill: var(--surface); stroke: var(--accent); stroke-width: 1.75; }
+  .d-fill  { fill: var(--sunken); stroke: var(--rule); stroke-width: 1.5; }
+  .d-eyebrow { fill: var(--faint); font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em; }
+  .d-t    { fill: var(--ink);    font-family: var(--mono); font-size: 13px; }
+  .d-code { fill: var(--ink);    font-family: var(--mono); font-size: 11.5px; }
+  .d-sub  { fill: var(--muted);  font-family: var(--mono); font-size: 10.5px; }
+  .d-lbl  { fill: var(--muted);  font-family: var(--mono); font-size: 10px; }
+  .d-lbl-a { fill: var(--accent); font-family: var(--mono); font-size: 10px; }
+  .d-lbl-s { fill: var(--signal); font-family: var(--mono); font-size: 10px; }
+  .d-line  { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+  .d-flow  { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+  .d-block { fill: none; stroke: var(--signal); stroke-width: 1.6; }
+  .d-dash  { stroke-dasharray: 4 4; }
+  .d-rule  { stroke: var(--rule); stroke-width: 1; }
+  .mk-m { fill: var(--muted); }
+  .mk-a { fill: var(--accent); }
+
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 15.5px; }
+  th, td { text-align: left; padding: 9px 16px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: baseline; }
+  th {
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--ink);
+  }
+  td.path { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; padding-right: 26px; }
+  td.layer { font-family: var(--mono); font-size: 10.5px; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; padding-right: 20px; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  ul.facts { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 15px; max-width: 76ch; }
+  ul.facts li { padding-left: 24px; position: relative; }
+  ul.facts li::before {
+    content: ""; position: absolute; left: 0; top: .66em;
+    width: 10px; height: 1.5px; background: var(--accent);
+  }
+  ul.facts.warn li::before { background: var(--signal); }
+  ul.facts b { font-family: var(--display); font-weight: 600; font-size: 16px; }
+
+  code {
+    font-family: var(--mono);
+    font-size: .84em;
+    background: var(--sunken);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+  pre {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.8;
+    background: var(--sunken); border: 1px solid var(--rule); border-radius: 3px;
+    padding: 16px 18px; overflow-x: auto; margin: 0;
+    color: var(--ink);
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: var(--muted); }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 26px; align-items: start; }
+
+  @media (max-width: 640px) {
+    body { font-size: 17px; }
+    .page { padding: 36px 16px 72px; gap: 42px; }
+    figure { padding: 18px 14px 14px; }
+    h2 { font-size: 24px; }
+  }
+</style>
+
+<div class="page">
+
+<header class="masthead">
+  <p class="eyebrow">Architecture &middot; github-pr-review-agent</p>
+  <h1>PR Review Agent Architecture</h1>
+  <p class="standfirst">A daemon that polls configured repositories, reviews newly-opened pull requests with a per-repo role, and posts findings as inline comments &mdash; driving a reviewer that cannot write files, open a shell, or reach the network.</p>
+  <div class="meta">
+    <span><b>AI_Utilities\github-pr-review-agent</b></span>
+    <span>branch <b>feat/pr-review-agent</b></span>
+    <span><b>27</b> commits</span>
+    <span><b>119</b> tests</span>
+    <span>TypeScript &middot; Node &middot; ESM</span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="num">01</span>The system at a glance</h2>
+  <div class="prose">
+    <p>Everything is driven by one timer. Each tick, the poller asks GitHub&rsquo;s Search API which pull requests match, and hands the numbers to an orchestrator that walks a single PR from clone to posted review. Reads fan out across three GitHub endpoints; writes go through exactly one module.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 1100 620" role="img" aria-label="System map: the Search API feeds a poller on a ten-minute timer; an orchestrator reads PR details, clones the PR head into a scratch directory, runs a sandboxed Claude subprocess, and posts findings through the single write path to the Reviews API, recording state on local disk.">
+      <defs>
+        <marker id="f1m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-m" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-a" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+
+      <rect class="d-group" x="24" y="90" width="200" height="290" rx="3"/>
+      <text class="d-eyebrow" x="24" y="80">GITHUB.COM</text>
+      <rect class="d-box" x="44" y="112" width="160" height="56" rx="2"/>
+      <text class="d-t" x="124" y="136" text-anchor="middle">Search API</text>
+      <text class="d-sub" x="124" y="154" text-anchor="middle">/search/issues</text>
+      <rect class="d-box" x="44" y="196" width="160" height="56" rx="2"/>
+      <text class="d-t" x="124" y="220" text-anchor="middle">Pulls &middot; Issues</text>
+      <text class="d-sub" x="124" y="238" text-anchor="middle">read-only</text>
+      <rect class="d-box" x="44" y="280" width="160" height="56" rx="2"/>
+      <text class="d-t" x="124" y="304" text-anchor="middle">Reviews API</text>
+      <text class="d-sub" x="124" y="322" text-anchor="middle">the write path</text>
+
+      <rect class="d-group" x="350" y="44" width="390" height="460" rx="3"/>
+      <text class="d-eyebrow" x="350" y="34">REVIEW DAEMON &middot; ONE INSTANCE</text>
+      <rect class="d-box" x="374" y="78" width="342" height="62" rx="2"/>
+      <text class="d-t" x="545" y="104" text-anchor="middle">poller/poll.ts</text>
+      <text class="d-sub" x="545" y="122" text-anchor="middle">two passes per repo, every cycle</text>
+      <rect class="d-box-a" x="374" y="170" width="342" height="62" rx="2"/>
+      <text class="d-t" x="545" y="196" text-anchor="middle">review/run-review.ts</text>
+      <text class="d-sub" x="545" y="214" text-anchor="middle">one pull request, end to end</text>
+      <rect class="d-box" x="374" y="262" width="342" height="62" rx="2"/>
+      <text class="d-t" x="545" y="288" text-anchor="middle">workspace/checkout.ts</text>
+      <text class="d-sub" x="545" y="306" text-anchor="middle">shallow clone, credentials in env</text>
+      <rect class="d-box" x="374" y="354" width="342" height="62" rx="2"/>
+      <text class="d-t" x="545" y="380" text-anchor="middle">github/post-review.ts</text>
+      <text class="d-sub" x="545" y="398" text-anchor="middle">the only write in the system</text>
+      <rect class="d-box" x="374" y="440" width="342" height="56" rx="2"/>
+      <text class="d-t" x="545" y="464" text-anchor="middle">state/store.ts</text>
+      <text class="d-sub" x="545" y="481" text-anchor="middle">passes &middot; failures &middot; last trigger id</text>
+
+      <rect class="d-group" x="800" y="140" width="276" height="210" rx="3"/>
+      <text class="d-eyebrow" x="800" y="130">CONTAINMENT BOUNDARY</text>
+      <rect class="d-box-a" x="824" y="176" width="228" height="92" rx="2"/>
+      <text class="d-t" x="938" y="202" text-anchor="middle">claude -p</text>
+      <text class="d-sub" x="938" y="222" text-anchor="middle">--bare &middot; user settings only</text>
+      <text class="d-sub" x="938" y="240" text-anchor="middle">Read &middot; Grep &middot; Glob</text>
+      <text class="d-sub" x="938" y="258" text-anchor="middle">no GITHUB_TOKEN</text>
+      <rect class="d-box" x="824" y="288" width="228" height="46" rx="2"/>
+      <text class="d-t" x="938" y="309" text-anchor="middle">cwd: the PR checkout</text>
+      <text class="d-sub" x="938" y="326" text-anchor="middle">read-only to the agent</text>
+
+      <text class="d-eyebrow" x="24" y="528">LOCAL DISK</text>
+      <rect class="d-fill" x="24" y="542" width="300" height="52" rx="2"/>
+      <text class="d-t" x="174" y="566" text-anchor="middle">config/repos.yaml</text>
+      <text class="d-sub" x="174" y="583" text-anchor="middle">repos &middot; roles &middot; filters</text>
+      <rect class="d-fill" x="380" y="542" width="300" height="52" rx="2"/>
+      <text class="d-t" x="530" y="566" text-anchor="middle">review-state.json</text>
+      <text class="d-sub" x="530" y="583" text-anchor="middle">temp file, then rename</text>
+      <rect class="d-fill" x="740" y="542" width="300" height="52" rx="2"/>
+      <text class="d-t" x="890" y="566" text-anchor="middle">workspace scratch</text>
+      <text class="d-sub" x="890" y="583" text-anchor="middle">removed after each review</text>
+
+      <path class="d-line" d="M 204 140 H 280 V 109 H 368" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="210" y="158">every 10 min</text>
+      <text class="d-lbl" x="210" y="172">is:pr is:open + filter</text>
+
+      <path class="d-line" d="M 204 224 H 292 V 201 H 368" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="210" y="242">PR &middot; diff &middot; reviews</text>
+
+      <path class="d-flow" d="M 374 385 H 272 V 308 H 210" marker-end="url(#f1a)"/>
+      <text class="d-lbl-a" x="216" y="400">POST review</text>
+      <text class="d-lbl-a" x="216" y="414">event: COMMENT</text>
+
+      <path class="d-line" d="M 545 140 V 162" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="556" y="157">new PR, or trigger</text>
+
+      <path class="d-line" d="M 545 232 V 254" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="556" y="249">clone the PR head</text>
+
+      <path class="d-line" d="M 545 324 V 346" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="556" y="341">post the findings</text>
+
+      <path class="d-flow" d="M 716 186 H 818" marker-end="url(#f1a)"/>
+      <text class="d-lbl-a" x="767" y="178" text-anchor="middle">prompt on stdin</text>
+
+      <path class="d-flow" d="M 818 224 H 718" marker-end="url(#f1a)"/>
+      <text class="d-lbl-a" x="768" y="240" text-anchor="middle">findings (JSON)</text>
+
+      <path class="d-line" d="M 716 300 H 768 V 536" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="776" y="404">shallow clone</text>
+      <text class="d-lbl" x="776" y="418">pull/N/head</text>
+
+      <path class="d-flow" d="M 890 536 V 340" marker-end="url(#f1a)"/>
+      <text class="d-lbl-a" x="898" y="450">the agent&rsquo;s cwd</text>
+
+      <path class="d-line" d="M 545 416 V 432" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="556" y="430">recorded only after the post succeeds</text>
+
+      <path class="d-line" d="M 530 496 V 536" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="540" y="520">atomic write</text>
+
+      <path class="d-line d-dash" d="M 174 542 V 520 H 390 V 508" marker-end="url(#f1m)"/>
+      <text class="d-lbl" x="250" y="512">roles + filters</text>
+    </svg>
+    <figcaption><b>Teal marks the review path proper</b> &mdash; prompt out, findings back, and the single write to GitHub. The poller also reads issue comments through the same read-only client to find trigger phrases. Nothing in the daemon writes to a repository except <b>post-review.ts</b>, and it only ever posts with <code>event: COMMENT</code>.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2><span class="num">02</span>What one cycle decides</h2>
+  <div class="prose">
+    <p>Each cycle runs two passes per repository. The auto pass finds PRs matching the repo&rsquo;s raw GitHub filter string; the manual pass finds PRs where someone commented the trigger phrase. They converge on the same reviewer, but they pass through different gates &mdash; a human asking for a second opinion should not be refused because the PR is a draft, or because an earlier attempt failed.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 900 560" role="img" aria-label="Gate ladder: the auto pass descends through four gates - already reviewed, three straight failures, draft PR, handled this cycle - each with a skip exit. The manual trigger bypasses the first three gates entirely and joins at the last one.">
+      <defs>
+        <marker id="f2m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-m" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="f2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-a" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+
+      <rect class="d-box" x="290" y="20" width="320" height="54" rx="2"/>
+      <text class="d-t" x="450" y="44" text-anchor="middle">Auto pass</text>
+      <text class="d-sub" x="450" y="62" text-anchor="middle">search filter matched this PR</text>
+
+      <rect class="d-box-a" x="650" y="20" width="230" height="54" rx="2"/>
+      <text class="d-t" x="765" y="44" text-anchor="middle">Manual trigger</text>
+      <text class="d-sub" x="765" y="62" text-anchor="middle">comment, or CLI</text>
+
+      <rect class="d-box" x="290" y="120" width="320" height="48" rx="2"/>
+      <text class="d-t" x="450" y="150" text-anchor="middle">Already reviewed?</text>
+      <rect class="d-box" x="290" y="200" width="320" height="48" rx="2"/>
+      <text class="d-t" x="450" y="230" text-anchor="middle">Three straight failures?</text>
+      <rect class="d-box" x="290" y="280" width="320" height="48" rx="2"/>
+      <text class="d-t" x="450" y="310" text-anchor="middle">Draft pull request?</text>
+      <rect class="d-box" x="290" y="360" width="320" height="48" rx="2"/>
+      <text class="d-t" x="450" y="390" text-anchor="middle">Handled this cycle?</text>
+
+      <rect class="d-box-a" x="290" y="452" width="320" height="58" rx="2"/>
+      <text class="d-t" x="450" y="478" text-anchor="middle">The review runs &mdash; pass N</text>
+      <text class="d-sub" x="450" y="496" text-anchor="middle">clone &middot; agent &middot; post &middot; record</text>
+
+      <path class="d-line" d="M 450 74 V 112" marker-end="url(#f2m)"/>
+      <text class="d-lbl" x="460" y="99">each match</text>
+      <path class="d-line" d="M 450 168 V 194" marker-end="url(#f2m)"/>
+      <text class="d-lbl" x="458" y="186">no</text>
+      <path class="d-line" d="M 450 248 V 274" marker-end="url(#f2m)"/>
+      <text class="d-lbl" x="458" y="266">no</text>
+      <path class="d-line" d="M 450 328 V 354" marker-end="url(#f2m)"/>
+      <text class="d-lbl" x="458" y="346">no</text>
+      <path class="d-line" d="M 450 408 V 446" marker-end="url(#f2m)"/>
+      <text class="d-lbl" x="458" y="432">no</text>
+
+      <path class="d-line" d="M 290 144 H 202" marker-end="url(#f2m)"/>
+      <text class="d-lbl" x="282" y="137" text-anchor="end">yes</text>
+      <text class="d-sub" x="192" y="148" text-anchor="end">it already has one</text>
+
+      <path class="d-block" d="M 290 224 H 202" marker-end="url(#f2m)"/>
+      <text class="d-lbl-s" x="282" y="217" text-anchor="end">yes</text>
+      <text class="d-sub" x="192" y="228" text-anchor="end">abandoned, logged once</text>
+
+      <path class="d-line" d="M 290 304 H 202" marker-end="url(#f2m)"/>
+      <text class="d-lbl" x="282" y="297" text-anchor="end">yes</text>
+      <text class="d-sub" x="192" y="308" text-anchor="end">drafts wait</text>
+
+      <path class="d-line" d="M 290 384 H 202" marker-end="url(#f2m)"/>
+      <text class="d-lbl" x="282" y="377" text-anchor="end">yes</text>
+      <text class="d-sub" x="192" y="388" text-anchor="end">the auto pass just did it</text>
+
+      <path class="d-flow" d="M 765 74 V 384 H 618" marker-end="url(#f2a)"/>
+      <text class="d-lbl-a" x="778" y="150">bypasses</text>
+      <text class="d-sub" x="778" y="166">the filter</text>
+      <text class="d-sub" x="778" y="182">prior reviews</text>
+      <text class="d-sub" x="778" y="198">the failure cap</text>
+      <text class="d-sub" x="778" y="214">the draft skip</text>
+    </svg>
+    <figcaption>The failure cap exists because the retry path costs money: a PR that fails every attempt would otherwise be cloned and sent to a paid model on <b>every cycle, forever</b>. A success clears the counter. The manual path is never capped &mdash; but it gets exactly one attempt, because the trigger comment id is recorded <b>before</b> the review runs.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2><span class="num">03</span>The containment boundary</h2>
+  <div class="prose">
+    <p>The reviewer runs with its working directory set to a checkout of code written by whoever opened the pull request. That is the whole security problem: attacker-controlled content, an agent with tools, and a host holding a GitHub token.</p>
+    <p>Three findings during construction shaped this boundary. A prefix allow-list on <code>git</code> turned out to be bypassable &mdash; <code>git diff --output=&lt;file&gt;</code> writes anywhere &mdash; so shell access was removed entirely rather than filtered. A PR that committed its own <code>.claude/settings.json</code> could run hooks on the host, which a working proof-of-concept demonstrated and the current flags demonstrably stop. And PR-derived text is wrapped in XML tags with closing sequences escaped, so a comment saying &ldquo;ignore your instructions&rdquo; reads as data.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 900 500" role="img" aria-label="Containment boundary: the prompt, the PR checkout, and the Anthropic API key cross into the agent subprocess, and findings come back out. The GitHub token, Bash and Edit and Write tools, WebFetch and WebSearch, and repository-supplied hooks and MCP servers are all stopped at the boundary.">
+      <defs>
+        <marker id="f3m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-m" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="f3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-a" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+
+      <text class="d-eyebrow" x="40" y="40">HOST PROCESS</text>
+      <line class="d-line d-dash" x1="470" y1="44" x2="470" y2="486" stroke-width="2"/>
+
+      <rect class="d-group" x="520" y="56" width="340" height="290" rx="3"/>
+      <text class="d-eyebrow" x="520" y="44">AGENT SUBPROCESS</text>
+      <text class="d-t" x="690" y="88" text-anchor="middle">one subprocess per review</text>
+      <text class="d-code" x="542" y="118">--bare</text>
+      <text class="d-code" x="542" y="138">--setting-sources user</text>
+      <text class="d-code" x="542" y="158">--strict-mcp-config</text>
+      <text class="d-code" x="542" y="178">--allowed-tools Read,Grep,Glob</text>
+      <text class="d-code" x="542" y="198">--disallowed-tools Bash,Edit,Write</text>
+      <text class="d-code" x="542" y="218">--output-format json</text>
+      <line class="d-rule" x1="542" y1="242" x2="838" y2="242"/>
+      <text class="d-sub" x="542" y="266">cwd = the PR checkout</text>
+      <text class="d-sub" x="542" y="286">no shell &middot; no writes &middot; no network</text>
+      <text class="d-sub" x="542" y="306">every flag is load-bearing</text>
+
+      <text class="d-t" x="420" y="104" text-anchor="end">the prompt</text>
+      <text class="d-sub" x="420" y="121" text-anchor="end">on stdin, never argv</text>
+      <path class="d-flow" d="M 432 100 H 514" marker-end="url(#f3a)"/>
+
+      <text class="d-t" x="420" y="156" text-anchor="end">the PR checkout</text>
+      <text class="d-sub" x="420" y="173" text-anchor="end">as the working directory</text>
+      <path class="d-flow" d="M 432 152 H 514" marker-end="url(#f3a)"/>
+
+      <text class="d-t" x="420" y="208" text-anchor="end">ANTHROPIC_API_KEY</text>
+      <text class="d-sub" x="420" y="225" text-anchor="end">plus PATH and HOME only</text>
+      <path class="d-flow" d="M 432 204 H 514" marker-end="url(#f3a)"/>
+
+      <text class="d-t" x="420" y="260" text-anchor="end">findings JSON</text>
+      <text class="d-sub" x="420" y="277" text-anchor="end">parsed, redacted, posted</text>
+      <path class="d-flow" d="M 514 256 H 432" marker-end="url(#f3a)"/>
+
+      <text class="d-t" x="420" y="324" text-anchor="end">GITHUB_TOKEN</text>
+      <text class="d-sub" x="420" y="341" text-anchor="end">the agent never sees it</text>
+      <path class="d-block" d="M 432 320 H 458"/>
+      <line class="d-block" x1="464" y1="314" x2="476" y2="326"/>
+      <line class="d-block" x1="476" y1="314" x2="464" y2="326"/>
+
+      <text class="d-t" x="420" y="370" text-anchor="end">Bash &middot; Edit &middot; Write</text>
+      <text class="d-sub" x="420" y="387" text-anchor="end">removed after a proven escape</text>
+      <path class="d-block" d="M 432 366 H 458"/>
+      <line class="d-block" x1="464" y1="360" x2="476" y2="372"/>
+      <line class="d-block" x1="476" y1="360" x2="464" y2="372"/>
+
+      <text class="d-t" x="420" y="416" text-anchor="end">WebFetch &middot; WebSearch</text>
+      <text class="d-sub" x="420" y="433" text-anchor="end">no outbound calls</text>
+      <path class="d-block" d="M 432 412 H 458"/>
+      <line class="d-block" x1="464" y1="406" x2="476" y2="418"/>
+      <line class="d-block" x1="476" y1="406" x2="464" y2="418"/>
+
+      <text class="d-t" x="420" y="462" text-anchor="end">the repo&rsquo;s .claude &middot; MCP</text>
+      <text class="d-sub" x="420" y="479" text-anchor="end">a pull request cannot run code</text>
+      <path class="d-block" d="M 432 458 H 458"/>
+      <line class="d-block" x1="464" y1="452" x2="476" y2="464"/>
+      <line class="d-block" x1="476" y1="452" x2="464" y2="464"/>
+    </svg>
+    <figcaption>Teal crosses the boundary; sienna is stopped at it. The prompt travels on <b>stdin rather than argv</b> because a 200,000-character diff exceeds the 32,767-character Windows command line &mdash; without it, every PR with a diff over about 29&nbsp;KB was unreviewable.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2><span class="num">04</span>Module map</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th scope="col">Layer</th><th scope="col">File</th><th scope="col">Responsibility</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="layer">entry</td><td class="path">src/index.ts</td><td>Process entry and the fatal handler; errors go through the redacting logger, never a bare console.</td></tr>
+        <tr><td class="layer">entry</td><td class="path">src/cli.ts</td><td>Commands <code>run</code>, <code>poll-once</code>, <code>review</code>; wires every dependency; sweeps leftover scratch directories at startup.</td></tr>
+        <tr><td class="layer">config</td><td class="path">src/config/schema.ts</td><td>Schema and repo resolution. A per-repo role or filter fully replaces the default rather than merging into it.</td></tr>
+        <tr><td class="layer">config</td><td class="path">src/config/load.ts</td><td>Reads the YAML; environment variables override the poll interval and trigger phrase.</td></tr>
+        <tr><td class="layer">loop</td><td class="path">src/poller/poll.ts</td><td>One cycle: the auto pass, then the trigger pass, with per-cycle de-duplication and the consecutive-failure cap.</td></tr>
+        <tr><td class="layer">loop</td><td class="path">src/review/run-review.ts</td><td>One pull request end to end: fetch, clone, prompt, run, post, record. Cleanup never masks the real outcome.</td></tr>
+        <tr><td class="layer">github</td><td class="path">src/github/queries.ts</td><td>Builds both search strings. The trigger query deliberately ignores the repo filter.</td></tr>
+        <tr><td class="layer">github</td><td class="path">src/github/client.ts</td><td>Every read: PR details, files, comments, prior reviews. Bounded pagination; the diff is capped at 200,000 characters.</td></tr>
+        <tr><td class="layer">github</td><td class="path">src/github/post-review.ts</td><td>The only write. Always <code>COMMENT</code>. On a 422 it falls back to a summary-only review so findings are never lost.</td></tr>
+        <tr><td class="layer">workspace</td><td class="path">src/workspace/checkout.ts</td><td>Shallow-fetches <code>pull/N/head</code> into a scratch directory. The token lives in process-scoped git config env vars, not in argv or <code>.git/config</code>.</td></tr>
+        <tr><td class="layer">runtime</td><td class="path">src/runtime/types.ts</td><td>The <code>ReviewRuntime</code> seam &mdash; what any backend must satisfy.</td></tr>
+        <tr><td class="layer">runtime</td><td class="path">src/runtime/index.ts</td><td>Runtime factory. Asking for <code>codex</code> throws an actionable error; it never silently falls back to Claude.</td></tr>
+        <tr><td class="layer">runtime</td><td class="path">src/runtime/claude.ts</td><td>The containment boundary: the flag set, the tool allow-list, and an explicit environment allow-list for the child.</td></tr>
+        <tr><td class="layer">runtime</td><td class="path">src/runtime/prompt.ts</td><td>Fills the template and escapes closing sequences in everything the PR author controls.</td></tr>
+        <tr><td class="layer">runtime</td><td class="path">src/runtime/parse.ts</td><td>Extracts the result object from model output, trying every candidate rather than the first brace it sees.</td></tr>
+        <tr><td class="layer">state</td><td class="path">src/state/store.ts</td><td>Durable per-PR state written temp-file-then-rename. A corrupt file is treated as empty; malformed entries are dropped.</td></tr>
+        <tr><td class="layer">shared</td><td class="path">src/logger.ts</td><td>Logging with secret redaction. Warnings and errors go to stderr so a service wrapper captures them.</td></tr>
+        <tr><td class="layer">prompt</td><td class="path">agent/pr-review-agent.md</td><td>The review instructions: role, untrusted-content directive, XML-tagged PR data, and the JSON output contract.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">05</span>Invariants worth keeping</h2>
+  <ul class="facts">
+    <li><b>One write path.</b> Only <code>post-review.ts</code> writes to GitHub, and it always posts <code>event: "COMMENT"</code>. The agent cannot approve or request changes because nothing in the system can.</li>
+    <li><b>State is recorded after the post, not before.</b> A failed post is retried next cycle instead of being silently marked done &mdash; except on the manual path, where the trigger id is recorded first so a single comment cannot start an unbounded retry.</li>
+    <li><b>The token never reaches the agent.</b> The child process gets an explicit environment allow-list, and every finding is passed through redaction before it is posted.</li>
+    <li><b>PR content is data, never instruction.</b> Titles, bodies, diffs, and prior reviews are XML-tagged, with closing sequences escaped so they cannot terminate their own block.</li>
+    <li><b>Manual review always wins over automation.</b> It ignores the filter, prior reviews, the draft skip, and the failure cap &mdash; a person asking for another pass gets one.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="num">06</span>Running it</h2>
+  <div class="cols">
+    <div>
+      <h3>Commands</h3>
+      <pre><code><span class="c"># continuous, the normal mode</span>
+node dist/index.js run
+
+<span class="c"># one cycle, then exit</span>
+node dist/index.js poll-once
+
+<span class="c"># force a pass on one PR</span>
+node dist/index.js review \
+  --repo owner/name --pr 42</code></pre>
+    </div>
+    <div>
+      <h3>Deployment</h3>
+      <p style="font-size:16px">A <code>Dockerfile</code> and <code>docker-compose.yml</code> ship with the project; the image installs <code>git</code> because the harness clones, and deliberately omits <code>gh</code> because the agent has no shell to call it from. For Windows, <code>docs/windows-service.md</code> covers running it under NSSM. Secrets come from a gitignored <code>.env</code>: a personal access token and an Anthropic API key.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">07</span>Known limits</h2>
+  <ul class="facts warn">
+    <li><b>The Docker build has never been run.</b> Docker was not installed on the build machine, so the image is unverified.</li>
+    <li><b>The first run reviews every matching open PR.</b> Forty open PRs means forty paid runs and forty public comments. Add <code>created:&gt;=YYYY-MM-DD</code> to the filter for the first cycle.</li>
+    <li><b>Exactly one instance per state file.</b> There is no locking; two daemons sharing a state file will double-post.</li>
+    <li><b>The search endpoint is deprecated</b> in the pinned client version. Both query shapes should be checked against live GitHub before relying on them.</li>
+    <li><b>A failed manual trigger is not retried.</b> The trigger comment is consumed whether or not the review succeeded; comment again to ask for another pass.</li>
+  </ul>
+</section>
+
+</div>
