@@ -1,0 +1,9 @@
+services:
+  pr-review-agent:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Config is read-only to the container; state must persist across restarts.
+      - ./config:/app/config:ro
+      - ./state:/app/state
