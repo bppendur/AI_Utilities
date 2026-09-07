@@ -4,3 +4,4 @@ dist/
 /state/
 workspaces/
 *.log
+/config/repos.yaml
